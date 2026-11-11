@@ -1,0 +1,191 @@
+# PC VIRTUAL GAMER - WINDOWS 11
+# Requer Windows Pro/Enterprise/Education com Hyper-V
+# Executar como Administrador
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "PC VIRTUAL GAMER | WINDOWS 11"
+$form.Size = New-Object System.Drawing.Size(540, 510)
+$form.StartPosition = "CenterScreen"
+$form.BackColor = [System.Drawing.Color]::FromArgb(15, 17, 30)
+$form.ForeColor = [System.Drawing.Color]::White
+$form.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+
+function Add-Label($text, $x, $y) {
+    $l = New-Object System.Windows.Forms.Label
+    $l.Text = $text
+    $l.Location = New-Object System.Drawing.Point($x, $y)
+    $l.AutoSize = $true
+    $l.ForeColor = [System.Drawing.Color]::White
+    $form.Controls.Add($l)
+}
+
+function Add-Button($text, $x, $y, $w, $h) {
+    $b = New-Object System.Windows.Forms.Button
+    $b.Text = $text
+    $b.Location = New-Object System.Drawing.Point($x, $y)
+    $b.Size = New-Object System.Drawing.Size($w, $h)
+    $b.FlatStyle = "Flat"
+    $b.BackColor = [System.Drawing.Color]::FromArgb(35, 75, 160)
+    $b.ForeColor = [System.Drawing.Color]::White
+    $b.FlatAppearance.BorderColor = [System.Drawing.Color]::Cyan
+    $form.Controls.Add($b)
+    return $b
+}
+
+$title = New-Object System.Windows.Forms.Label
+$title.Text = "⚡ PC VIRTUAL GAMER"
+$title.Font = New-Object System.Drawing.Font("Segoe UI", 22, [System.Drawing.FontStyle]::Bold)
+$title.ForeColor = [System.Drawing.Color]::Cyan
+$title.Location = New-Object System.Drawing.Point(90, 20)
+$title.AutoSize = $true
+$form.Controls.Add($title)
+
+Add-Label "Nome da máquina:" 35 100
+$nome = New-Object System.Windows.Forms.TextBox
+$nome.Location = New-Object System.Drawing.Point(210, 96)
+$nome.Size = New-Object System.Drawing.Size(260, 25)
+$nome.Text = "PC-GAMER-W11"
+$form.Controls.Add($nome)
+
+Add-Label "Memória RAM (GB):" 35 145
+$ram = New-Object System.Windows.Forms.NumericUpDown
+$ram.Location = New-Object System.Drawing.Point(210, 141)
+$ram.Minimum = 4
+$ram.Maximum = 64
+$ram.Value = 8
+$form.Controls.Add($ram)
+
+Add-Label "Disco virtual (GB):" 35 190
+$disco = New-Object System.Windows.Forms.NumericUpDown
+$disco.Location = New-Object System.Drawing.Point(210, 186)
+$disco.Minimum = 64
+$disco.Maximum = 1000
+$disco.Value = 100
+$form.Controls.Add($disco)
+
+Add-Label "ISO do Windows 11:" 35 235
+$iso = New-Object System.Windows.Forms.TextBox
+$iso.Location = New-Object System.Drawing.Point(35, 260)
+$iso.Size = New-Object System.Drawing.Size(340, 25)
+$form.Controls.Add($iso)
+
+$browse = Add-Button "PROCURAR" 385 257 105 30
+$browse.Add_Click({
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $dialog.Filter = "Imagem ISO (*.iso)|*.iso"
+    if ($dialog.ShowDialog() -eq "OK") {
+        $iso.Text = $dialog.FileName
+    }
+})
+
+Add-Label "Rede virtual:" 35 310
+$rede = New-Object System.Windows.Forms.ComboBox
+$rede.Location = New-Object System.Drawing.Point(210, 306)
+$rede.Size = New-Object System.Drawing.Size(260, 25)
+$rede.DropDownStyle = "DropDownList"
+$form.Controls.Add($rede)
+
+try {
+    Get-VMSwitch | ForEach-Object {
+        [void]$rede.Items.Add($_.Name)
+    }
+} catch {}
+
+if ($rede.Items.Count -gt 0) {
+    $rede.SelectedIndex = 0
+}
+
+$status = New-Object System.Windows.Forms.Label
+$status.Text = "STATUS: AGUARDANDO"
+$status.Location = New-Object System.Drawing.Point(35, 355)
+$status.AutoSize = $true
+$status.ForeColor = [System.Drawing.Color]::Lime
+$form.Controls.Add($status)
+
+$criar = Add-Button "CRIAR E INICIAR PC" 35 390 455 45
+
+$criar.Add_Click({
+    try {
+        if (-not (Test-Path $iso.Text)) {
+            throw "Selecione uma ISO válida do Windows 11."
+        }
+
+        if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            throw "Execute o aplicativo como Administrador."
+        }
+
+        if (-not (Get-Command New-VM -ErrorAction SilentlyContinue)) {
+            throw "Hyper-V não está instalado ou habilitado."
+        }
+
+        $n = $nome.Text.Trim()
+        if ($n -notmatch '^[a-zA-Z0-9-]{1,50}$') {
+            throw "Use um nome com letras, números ou hífen."
+        }
+
+        if (Get-VM -Name $n -ErrorAction SilentlyContinue) {
+            throw "Já existe uma máquina com esse nome."
+        }
+
+        $status.Text = "STATUS: CRIANDO MÁQUINA..."
+        $form.Refresh()
+
+        $pasta = Join-Path $env:ProgramData "PCGamerVM"
+        New-Item -ItemType Directory -Path $pasta -Force | Out-Null
+        $vhd = Join-Path $pasta "$n.vhdx"
+
+        New-VM -Name $n `
+            -Generation 2 `
+            -MemoryStartupBytes ([long]$ram.Value * 1GB) `
+            -NoVHD `
+            -ErrorAction Stop | Out-Null
+
+        New-VHD -Path $vhd `
+            -SizeBytes ([long]$disco.Value * 1GB) `
+            -Dynamic -ErrorAction Stop | Out-Null
+
+        Add-VMHardDiskDrive -VMName $n -Path $vhd
+        Set-VMProcessor -VMName $n -Count 2
+        Add-VMDvdDrive -VMName $n -Path $iso.Text
+
+        Set-VMFirmware -VMName $n `
+            -EnableSecureBoot On `
+            -SecureBootTemplate MicrosoftWindows
+
+        Set-VMKeyProtector -VMName $n -NewLocalKeyProtector
+        Enable-VMTPM -VMName $n
+
+        if ($rede.SelectedItem) {
+            Connect-VMNetworkAdapter -VMName $n `
+                -SwitchName $rede.SelectedItem
+        }
+
+        $status.Text = "STATUS: INICIANDO WINDOWS 11..."
+        $form.Refresh()
+
+        Start-VM -Name $n
+        Start-Process vmconnect.exe -ArgumentList "localhost", $n
+
+        [System.Windows.Forms.MessageBox]::Show(
+            "Máquina criada! Siga a instalação do Windows 11 na janela da máquina virtual.",
+            "PC GAMER",
+            "OK",
+            "Information"
+        )
+        $status.Text = "STATUS: MÁQUINA INICIADA"
+    }
+    catch {
+        $status.Text = "STATUS: ERRO"
+        [System.Windows.Forms.MessageBox]::Show(
+            $_.Exception.Message,
+            "Erro",
+            "OK",
+            "Error"
+        )
+    }
+})
+
+[void]$form.ShowDialog()
